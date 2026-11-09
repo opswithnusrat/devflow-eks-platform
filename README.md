@@ -8,6 +8,27 @@ cluster, so you can see how it is built without me publishing everything.
 > Screenshots were captured on **2026-10-29** from the running cluster. The cluster is
 > torn down between work sessions to control cost, so there is no permanent live URL.
 
+## Architecture
+
+The whole platform on one page: the request path, the GitOps delivery path, what runs
+inside the EKS cluster, and the two Terraform layers underneath. Solid boxes ran in the
+2026-10-29 build; dashed boxes are optional tools that ran in an earlier build.
+
+![DevFlow architecture](images/devflow-architecture.png)
+
+## SRE Copilot on the platform
+
+SRE Copilot is an AI agent that diagnoses broken Kubernetes workloads. It runs on the same
+golden path as every other app: Route 53 → Network Load Balancer → Cilium Gateway →
+the agent, which retrieves runbooks from Qdrant, reads cluster state through a read-only
+Kubernetes role, and returns a cited diagnosis. It is wrapped in input and output
+guardrails, scaled by KEDA on in-flight requests, released as an Argo Rollouts canary
+gated by evals, and traced end to end with cost per diagnosis.
+
+> Agent runs used a simulated model, not a real LLM. Details in [`sre-copilot/`](sre-copilot/).
+
+![SRE Copilot on DevFlow: request to diagnosis](images/sre-copilot-request-to-diagnosis.png)
+
 ## What is in here
 
 | Folder | What it shows | Real evidence |
