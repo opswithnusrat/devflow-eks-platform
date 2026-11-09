@@ -1,0 +1,136 @@
+apiVersion: argoproj.io/v1alpha1
+kind: ApplicationSet
+metadata:
+  name: platform
+  namespace: argocd
+spec:
+  goTemplate: true
+  generators:
+    - git:
+        repoURL: https://github.com/<your-org>/<your-repo>
+        revision: HEAD
+        directories:
+          # How this works: the glob discovers every platform/<area>/<tool>.
+          # Each tool then has ONE entry below — the last matching entry wins:
+          #   exclude: false  → tool is ON  (ArgoCD creates + syncs the Application)
+          #   exclude: true   → tool is OFF (no Application; prune removes it)
+          # To install a tool: set exclude: false, commit, push.
+          # To uninstall:      set exclude: true,  commit, push.
+          - path: "devflow-gitops/clusters/main/platform/*/*"
+
+          # ── Structural excludes (not toggles — do not change) ────────────────
+          # cluster-resources is owned by the bootstrap Application.
+          - path: "devflow-gitops/clusters/main/platform/cluster-resources*"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/cluster-resources/*/*"
+            exclude: true
+          # Karpenter NodePool/EC2NodeClass are owned by Terraform (split-brain risk).
+          - path: "devflow-gitops/clusters/main/platform/autoscaling/karpenter-nodes"
+            exclude: true
+
+          # ══ TOOL TOGGLES ═════════════════════════════════════════════════════
+          # ── ai-ops ──
+          - path: "devflow-gitops/clusters/main/platform/ai-ops/k8sgpt"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/ai-ops/keda-demo"
+            exclude: true
+
+          # ── autoscaling ──
+          - path: "devflow-gitops/clusters/main/platform/autoscaling/descheduler"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/autoscaling/goldilocks"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/autoscaling/keda"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/autoscaling/vpa"
+            exclude: true
+
+          # ── backup ──
+          - path: "devflow-gitops/clusters/main/platform/backup/velero"
+            exclude: true
+
+          # ── cost ──
+          - path: "devflow-gitops/clusters/main/platform/cost/crossplane"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/cost/opencost"
+            exclude: false
+
+          # ── delivery ──
+          - path: "devflow-gitops/clusters/main/platform/delivery/argo-rollouts"
+            exclude: true
+          - path: "devflow-gitops/clusters/main/platform/delivery/argocd-image-updater"
+            exclude: false
+
+          # ── monitoring ──
+          - path: "devflow-gitops/clusters/main/platform/monitoring/alloy"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/monitoring/grafana"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/monitoring/headlamp"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/monitoring/loki"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/monitoring/metrics-server"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/monitoring/mimir"
+            exclude: false
+
+          # ── networking ──
+          - path: "devflow-gitops/clusters/main/platform/networking/argocd-server"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/networking/aws-load-balancer-controller"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/networking/cert-manager"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/networking/external-dns"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/networking/gateway-system"
+            exclude: false
+
+          # ── policy ──
+          - path: "devflow-gitops/clusters/main/platform/policy/kyverno"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/policy/kyverno-policies"
+            exclude: false
+
+          # ── secrets ──
+          - path: "devflow-gitops/clusters/main/platform/secrets/cluster-secret-store"
+            exclude: false
+          - path: "devflow-gitops/clusters/main/platform/secrets/external-secrets"
+            exclude: false
+
+  template:
+    metadata:
+      name: "{{.path.basename}}"
+      namespace: argocd
+      annotations:
+        argocd.argoproj.io/compare-options: ServerSideDiff=true,IncludeMutationWebhook=true
+    spec:
+      # Project derived from the area directory (e.g. platform/networking/cert-manager → platform-networking)
+      project: "platform-{{index .path.segments (sub (len .path.segments) 2)}}"
+      source:
+        repoURL: https://github.com/<your-org>/<your-repo>
+        targetRevision: HEAD
+        path: "{{.path.path}}"
+      destination:
+        server: https://kubernetes.default.svc
+        # argocd-server HTTPRoute targets the existing argocd namespace (where the
+        # argocd-server Service lives) — not a new argocd-server namespace.
+        namespace: '{{if eq .path.path "devflow-gitops/clusters/main/platform/networking/argocd-server"}}argocd{{else if eq .path.path "devflow-gitops/clusters/main/platform/delivery/argocd-image-updater"}}argocd{{else if eq .path.path "devflow-gitops/clusters/main/platform/monitoring/metrics-server"}}kube-system{{else if eq .path.path "devflow-gitops/clusters/main/platform/monitoring/mimir"}}monitoring{{else if eq .path.path "devflow-gitops/clusters/main/platform/monitoring/loki"}}monitoring{{else if eq .path.path "devflow-gitops/clusters/main/platform/monitoring/alloy"}}monitoring{{else if eq .path.path "devflow-gitops/clusters/main/platform/monitoring/grafana"}}monitoring{{else if eq .path.path "devflow-gitops/clusters/main/platform/secrets/cluster-secret-store"}}external-secrets{{else if eq .path.path "devflow-gitops/clusters/main/platform/autoscaling/vpa"}}vpa-system{{else if eq .path.path "devflow-gitops/clusters/main/platform/autoscaling/goldilocks"}}goldilocks{{else if eq .path.path "devflow-gitops/clusters/main/platform/autoscaling/descheduler"}}descheduler-system{{else if eq .path.path "devflow-gitops/clusters/main/platform/autoscaling/keda"}}keda{{else if eq .path.path "devflow-gitops/clusters/main/platform/ai-ops/k8sgpt"}}k8sgpt{{else if eq .path.path "devflow-gitops/clusters/main/platform/ai-ops/keda-demo"}}demo-dev{{else if eq .path.path "devflow-gitops/clusters/main/platform/backup/velero"}}velero{{else if eq .path.path "devflow-gitops/clusters/main/platform/cost/opencost"}}opencost{{else if eq .path.path "devflow-gitops/clusters/main/platform/cost/crossplane"}}crossplane-system{{else}}{{.path.basename}}{{end}}'
+      syncPolicy:
+        automated:
+          prune: true
+          selfHeal: true
+        retry:
+          limit: 3
+          backoff:
+            duration: 5s
+            factor: 2
+            maxDuration: 3m
+        syncOptions:
+          - CreateNamespace=true
+          - ServerSideApply=true
+          - FailOnSharedResource=true
+          - PruneLast=true
+          - ApplyOutOfSyncOnly=true
+          - SkipDryRunOnMissingResource=true

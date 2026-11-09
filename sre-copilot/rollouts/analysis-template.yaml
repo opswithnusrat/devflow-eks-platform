@@ -1,0 +1,45 @@
+# Argo Rollouts (package 1.12): run the eval suite against the canary before promotion.
+# The Job's exit code is the result: 0 = gate passed, non-zero = abort and roll back.
+apiVersion: argoproj.io/v1alpha1
+kind: AnalysisTemplate
+metadata:
+  name: sre-agent-eval
+  namespace: sre-agent
+spec:
+  args:
+    - name: canary-url        # e.g. http://sre-agent-canary.sre-agent.svc:8080
+    - name: version
+  metrics:
+    - name: eval-gate
+      provider:
+        job:
+          spec:
+            backoffLimit: 0
+            activeDeadlineSeconds: 900
+            template:
+              spec:
+                restartPolicy: Never
+                serviceAccountName: sre-eval
+                securityContext: {runAsNonRoot: true, runAsUser: 10001, seccompProfile: {type: RuntimeDefault}}
+                containers:
+                  - name: eval
+                    image: ACCOUNT.dkr.ecr.REGION.amazonaws.com/sre-copilot:SHA
+                    args:
+                      - sre-eval
+                      - all
+                      - --agent-url={{args.canary-url}}
+                      - --version={{args.version}}
+                      - --repeats=3
+                      - --qdrant-url=http://qdrant.sre-agent.svc:6333
+                      - --report=/tmp/eval-report.json
+                    env:
+                      - {name: PUSHGATEWAY_URL, value: "http://pushgateway.monitoring.svc:9091"}
+                    resources:
+                      requests: {cpu: 250m, memory: 512Mi}
+                      limits: {cpu: "1", memory: 1Gi}
+                    securityContext:
+                      allowPrivilegeEscalation: false
+                      readOnlyRootFilesystem: true
+                      capabilities: {drop: ["ALL"]}
+                    volumeMounts: [{name: tmp, mountPath: /tmp}]
+                volumes: [{name: tmp, emptyDir: {}}]

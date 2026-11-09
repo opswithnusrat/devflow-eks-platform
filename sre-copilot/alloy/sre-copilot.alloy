@@ -1,0 +1,38 @@
+// Add to the existing DevFlow Alloy config.
+
+// 1) Traces: receive OTLP from the agent, executor and eval jobs, batch, forward to Tempo.
+otelcol.receiver.otlp "default" {
+  grpc { endpoint = "0.0.0.0:4317" }
+  http { endpoint = "0.0.0.0:4318" }
+  output { traces = [otelcol.processor.batch.default.input] }
+}
+
+otelcol.processor.batch "default" {
+  output { traces = [otelcol.exporter.otlp.tempo.input] }
+}
+
+otelcol.exporter.otlp "tempo" {
+  client {
+    endpoint = "tempo.monitoring.svc:4317"
+    tls { insecure = true }
+  }
+}
+
+// 2) Audit events (ADR-005): JSON lines with log_type=audit get their own Loki stream.
+//    Insert this stage into the loki.process block that handles pod logs in namespace sre-agent.
+loki.process "sre_copilot_audit" {
+  stage.json {
+    expressions = { log_type = "log_type", trace_id = "trace_id", event = "event" }
+  }
+  stage.labels {
+    values = { log_type = "" }
+  }
+  stage.match {
+    selector = "{log_type=\"audit\"}"
+    stage.static_labels { values = { stream = "audit" } }
+  }
+  stage.structured_metadata {
+    values = { trace_id = "", event = "" }
+  }
+  forward_to = [loki.write.default.receiver]
+}

@@ -1,0 +1,55 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - namespace.yaml
+  - httproute.yaml
+
+helmCharts:
+  - name: headlamp
+    repo: https://kubernetes-sigs.github.io/headlamp/
+    version: 0.45.0
+    releaseName: headlamp
+    namespace: headlamp
+    valuesInline:
+      replicaCount: 1
+
+      image:
+        pullPolicy: IfNotPresent
+
+      service:
+        type: ClusterIP
+        port: 80
+
+      serviceAccount:
+        create: true
+        name: headlamp
+
+      # Grant cluster-admin so Headlamp can view and manage all resources
+      clusterRoleBinding:
+        create: true
+        clusterRoleName: cluster-admin
+
+      # Disable built-in ingress — using Gateway HTTPRoute instead
+      ingress:
+        enabled: false
+
+      # inCluster: true — headlamp uses its own pod SA token to talk to the API server.
+      # No kubeconfig volume or SM secret needed. Works across fresh deploys automatically.
+      # cluster-admin binding above grants full cluster visibility.
+      config:
+        inCluster: true
+
+      args:
+        - "-plugins-dir=/headlamp/plugins"
+        - "-session-ttl=0"
+
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          memory: 256Mi
+
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "5"

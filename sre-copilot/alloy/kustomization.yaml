@@ -1,0 +1,104 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+helmCharts:
+  - name: k8s-monitoring
+    repo: https://grafana.github.io/helm-charts
+    version: 3.8.12
+    releaseName: alloy
+    namespace: monitoring
+    includeCRDs: true
+    valuesInline:
+      cluster:
+        name: devflow
+
+      global:
+        scrapeInterval: 30s   # 15s doubles series volume; start at 30s
+
+      destinations:
+        - name: mimir
+          type: prometheus
+          url: http://mimir-distributor.monitoring.svc.cluster.local:8080/api/v1/push
+
+        - name: loki
+          type: loki
+          url: http://loki-gateway.monitoring.svc.cluster.local/loki/api/v1/push
+
+      clusterMetrics:
+        enabled: true
+
+        cadvisor:
+          enabled: true
+          jobLabel: cadvisor
+          metricsTuning:
+            useDefaultAllowList: true
+
+        kube-state-metrics:
+          enabled: true
+
+        node-exporter:
+          metricsTuning:
+            useIntegrationAllowList: true
+
+        kubeProxy:
+          enabled: false   # Cilium replaces kube-proxy (Gate 0 deletes it)
+
+        kubeControllerManager:
+          enabled: false   # not reachable on EKS managed control plane
+        kubeScheduler:
+          enabled: false   # not reachable on EKS managed control plane
+
+        apiServer:
+          enabled: false   # high cardinality; enable when headroom exists
+        controlPlane:
+          enabled: false
+
+      podLogs:
+        enabled: true
+        namespaces: []   # all namespaces; narrow if log volume becomes a cost issue
+
+      clusterEvents:
+        enabled: true
+
+      # Alloy reads ServiceMonitor and PodMonitor CRDs — Karpenter, Cilium,
+      # ArgoCD serviceMonitor.enabled all work without running Prometheus
+      prometheusOperatorObjects:
+        enabled: true
+        crds:
+          deploy: true
+
+      annotationAutodiscovery:
+        enabled: true
+        enableReporting: false
+
+      integrations:
+        alloy:
+          instances:
+            - name: alloy
+              namespaces:
+                - monitoring
+              labelSelectors:
+                app.kubernetes.io/name: alloy-metrics
+
+      alloy-metrics:
+        enabled: true
+        enableReporting: false
+        alloy:
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits:   { memory: 512Mi }
+
+      alloy-logs:
+        enabled: true
+        enableReporting: false
+        alloy:
+          resources:
+            requests: { cpu: 50m, memory: 128Mi }
+            limits:   { memory: 256Mi }
+
+      alloy-singleton:
+        enabled: true
+        enableReporting: false
+
+commonAnnotations:
+  argocd.argoproj.io/sync-wave: "0"

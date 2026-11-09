@@ -1,0 +1,124 @@
+# ─── Core ─────────────────────────────────────────────────────────────────────
+kubeProxyReplacement: "true"
+rollOutCiliumPods: true
+policyEnforcementMode: default
+
+operator:
+  replicas: 2
+  rollOutPods: true
+  # aws-enable-prefix-delegation is read by the operator from CLI args, not from
+  # the cilium-config ConfigMap. Without this flag the operator creates ENIs with
+  # secondary IPs only (3-4 per ENI), which can never satisfy preAllocate=9,
+  # causing a continuous attach/release oscillation (~1 ENI/min per node).
+  extraArgs:
+    - --aws-enable-prefix-delegation=true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      memory: 256Mi
+envoy:
+  rollOutPods: true
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 512Mi
+  limits:
+    memory: 1Gi
+
+# ─── AWS ENI Networking ───────────────────────────────────────────────────────
+# ENI mode: Cilium manages pod IPs via AWS ENI — replaces aws-node (VPC CNI)
+ipam:
+  mode: eni
+
+eni:
+  enabled: true
+  # Prefix delegation: each ENI attachment carries a /28 (16 IPs) in one API
+  # call instead of 1 IP per call.
+  # IPAM defaults (preAllocate/minAllocate/maxAboveWatermark) are deliberately
+  # unset — running Cilium's defaults to match the reference configuration.
+  awsEnablePrefixDelegation: true
+  awsReleaseExcessIPs: false
+
+routingMode: native
+# ipv4NativeRoutingCIDR: "10.0.0.0/16"
+# Not set — matches the reference configuration. Without it, pod→VPC traffic is
+# masqueraded to the node's primary ENI IP, so secondary ENI SourceDestCheck is
+# never in the return path. Verify: kubectl get cm cilium-config -n kube-system | grep native-routing
+
+k8sClientRateLimit:
+  qps: 50
+  burst: 100
+
+bpf:
+  # netkit: BPF programs attach at device-driver level, eliminating the window
+  # between veth creation and TC-hook attachment where a pod has no BPF program.
+  # Requires kernel ≥ 6.8 (nodes run 6.12).
+  datapathMode: netkit
+  masquerade: true
+  distributedLRU:
+    enabled: true
+  mapDynamicSizeRatio: "0.08"
+  events:
+    monitorInterval: 10s
+
+bpfClockProbe: true
+
+ipv4:
+  enabled: true
+
+enableIPv4Masquerade: true
+# enableIPv4BIGTCP: true  # stripped — can silently drop large packets; re-enable after baseline verified
+
+# localRedirectPolicies:  # stripped — unverified; re-enable after baseline verified
+#   enabled: true
+
+bandwidthManager:
+  enabled: true
+  # bbr: true  # stripped — unverified on AL2023; re-enable after baseline verified
+
+loadBalancer:
+  mode: snat        # hybrid = DSR for TCP which AWS drops (IP options stripped); SNAT works everywhere
+  algorithm: maglev
+  # acceleration: best-effort  # stripped — unverified; re-enable after baseline verified
+  # serviceTopology: true      # stripped — unverified; re-enable after baseline verified
+
+# ─── Gateway API ──────────────────────────────────────────────────────────────
+gatewayAPI:
+  enabled: true
+
+# ─── Hubble Observability ─────────────────────────────────────────────────────
+hubble:
+  enabled: true
+  eventQueueSize: "32768"
+  relay:
+    enabled: true
+    rollOutPods: true
+  # ui:  # stripped — unverified; re-enable after baseline verified
+  #   enabled: true
+  #   rollOutPods: true
+  metrics:
+    enabled:
+      - dns
+      - drop
+      - tcp
+      - flow
+      - port-distribution
+      - icmp
+
+# ─── Lever 3: Stagger rollouts ────────────────────────────────────────────────
+# Rolling restarts (cilium-only re-apply, operator upgrades) with the default
+# maxUnavailable=1 are fine for a 2-node cluster. Workload rollouts (ArgoCD,
+# Karpenter) are not controlled here — set maxUnavailable/maxSurge conservatively
+# in those Helm charts to avoid IPAM burst. Cilium itself is the gating layer.
+updateStrategy:
+  type: RollingUpdate
+  rollingUpdate:
+    maxUnavailable: 1   # only 1 Cilium pod replaced at a time — default but explicit
+
+# ─── Service Account ──────────────────────────────────────────────────────────
+serviceAccount:
+  create: true
+  name: cilium

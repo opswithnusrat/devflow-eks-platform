@@ -1,0 +1,23 @@
+apiVersion: argoproj.io/v1alpha1
+kind: AppProject
+metadata:
+  name: platform-monitoring
+  namespace: argocd
+spec:
+  description: Platform observability — Mimir, Loki, Alloy, Grafana, metrics-server, Headlamp
+  sourceRepos:
+    - 'https://github.com/<your-org>/<your-repo>'
+    - 'https://grafana.github.io/helm-charts'
+    - 'https://kubernetes-sigs.github.io/metrics-server/'
+    - 'https://open-telemetry.github.io/opentelemetry-helm-charts'
+    - 'https://kubernetes-sigs.github.io/headlamp/'
+  destinations:
+    - namespace: monitoring
+      server: https://kubernetes.default.svc
+    - namespace: kube-system   # metrics-server deploys here
+      server: https://kubernetes.default.svc
+    - namespace: headlamp
+      server: https://kubernetes.default.svc
+  clusterResourceWhitelist:
+    - group: '*'
+      kind: '*'
